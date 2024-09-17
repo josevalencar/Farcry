@@ -1,0 +1,2 @@
+# Farcry
+Crypto forecasting analysis
