@@ -7,6 +7,9 @@ import yfinance as yf
 from ta import add_all_ta_features
 import joblib
 import pandas as pd
+import os
+from supabase import Client
+from pycaret.regression import load_model
 
 # Set up logging configuration
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -90,26 +93,36 @@ def preprocess_for_prediction(df):
         logger.error(f"Unexpected error during preprocessing: {str(e)}")
         raise
 
-# Function to load the model and make a prediction (for both BTC and ETH)
-def load_model_and_predict(data, model_path):
+# Function to download the model from Supabase Storage using the provided Supabase client
+def download_model_from_supabase(supabase, bucket_name: str, model_path: str):
     try:
-        logger.info("Loading pre-trained model.")
-        model = joblib.load(model_path)
+        logger.info(f"Downloading model from Supabase bucket: {bucket_name}, path: {model_path}")
+        response = supabase.storage.from_(bucket_name).download(model_path)
+        model_file_path = f"/tmp/{os.path.basename(model_path)}"  # Save the model in a temporary directory
         
-        logger.info(f"Data shape before prediction: {data.shape}")
-        logger.info(f"Model expects {model.n_features_in_} features.")
+        with open(model_file_path, "wb") as f:
+            f.write(response)
         
-        logger.debug(f"Data columns: {data.columns.tolist()}")
-        logger.debug(f"Model feature names: {model.feature_names_in_}") 
+        logger.info(f"Model {model_path} downloaded successfully.")
+        return model_file_path
+    
+    except Exception as e:
+        logger.error(f"Error downloading model from Supabase: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to download model from Supabase: {str(e)}")
 
-        if data.shape[1] != model.n_features_in_:
-            logger.error(f"Mismatch! Data has {data.shape[1]} columns but model expects {model.n_features_in_} features.")
-            
-            missing_columns = set(model.feature_names_in_) - set(data.columns)
-            logger.error(f"Missing columns: {missing_columns}")
-            
-            raise ValueError(f"Expected {model.n_features_in_} features, but got {data.shape[1]}.")
-
+# Function to load the model and make a prediction (for both BTC and ETH)
+def load_model_and_predict(supabase, data, bucket_name, model_path):
+    try:
+        logger.info("Loading pre-trained PyCaret model.")
+        
+        # Download the model from Supabase
+        model_file_path = download_model_from_supabase(supabase, bucket_name, model_path)
+        
+        # Load the model using PyCaret's load_model function
+        model = load_model(model_file_path.replace('.pkl', ''))  # Remove .pkl from file path for PyCaret
+        
+        logger.info(f"Model loaded successfully.")
+        
         latest_data = data.iloc[-1:].fillna(0)
         
         logger.debug("Latest data for prediction:")
@@ -126,19 +139,19 @@ def load_model_and_predict(data, model_path):
         raise
 
 # Main function to run the regression prediction for both BTC and ETH
-def regression_prediction():
+def regression_prediction(supabase):
     try:
         logger.info("Starting regression prediction process for BTC and ETH.")
         
         # BTC Prediction
         btc_df = fetch_btc_data()
         btc_df_processed = preprocess_for_prediction(btc_df)
-        btc_prediction = load_model_and_predict(btc_df_processed, 'utils/btc_br_model.pkl')
+        btc_prediction = load_model_and_predict(supabase, btc_df_processed, 'regression_models', 'BTC/btc_br_model.pkl')
         
         # ETH Prediction
         eth_df = fetch_eth_data()
         eth_df_processed = preprocess_for_prediction(eth_df)
-        eth_prediction = load_model_and_predict(eth_df_processed, 'utils/eth_br_model.pkl')
+        eth_prediction = load_model_and_predict(supabase, eth_df_processed, 'regression_models', 'ETH/eth_br_model.pkl')
         
         logger.info("Regression prediction completed successfully for both BTC and ETH.")
         return {"Prediction BTC": btc_prediction[0], "Prediction ETH": eth_prediction[0]}
@@ -146,8 +159,3 @@ def regression_prediction():
     except Exception as e:
         logger.error(f"Error in regression prediction: {str(e)}")
         return {"Error": str(e)}
-
-# Running the function
-if __name__ == "__main__":
-    result = regression_prediction()
-    logger.info(f"Result: {result}")
