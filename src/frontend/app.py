@@ -75,7 +75,7 @@ except locale.Error:
 
 def fetch_time_series():
     try:
-        response = requests.get("http://127.0.0.1:8000/predictTimeSeries")
+        response = requests.get("http://backend:8000/predictTimeSeries")
         if response.status_code == 200:
             data = response.json()
             btc_ts_historical = data.get('BTC', {}).get('historical', {})
@@ -103,7 +103,7 @@ if value == "Dashboard":
     prediction_btc = None
     prediction_eth = None
     try:
-        response = requests.get("http://127.0.0.1:8000/predictRegression")
+        response = requests.get("http://backend:8000/predictRegression")
         if response.status_code == 200:
             data = response.json()
             prediction_btc = data.get('Prediction BTC', 0)  # Extract the BTC prediction value
