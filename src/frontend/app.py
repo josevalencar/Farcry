@@ -30,6 +30,7 @@ custom_styles = """
         padding: 10px;
         border-radius: 8px;
         text-align: center;
+        margin-bottom: 20px;  /* Added padding below */
     }
     .dont-buy-card {
         background-color: #ffe0e0;
@@ -37,6 +38,7 @@ custom_styles = """
         padding: 10px;
         border-radius: 8px;
         text-align: center;
+        margin-bottom: 20px;  /* Added padding below */
     }
     </style>
 """
@@ -71,8 +73,22 @@ try:
 except locale.Error:
     st.error("Locale setting 'pt_BR.UTF-8' is not supported on this system. Please ensure your environment supports this locale.")
 
-def load_regression_model():
-    pass
+def fetch_time_series():
+    try:
+        response = requests.get("http://127.0.0.1:8000/predictTimeSeries")
+        if response.status_code == 200:
+            data = response.json()
+            btc_ts_historical = data.get('BTC', {}).get('historical', {})
+            btc_ts_forecast = data.get('BTC', {}).get('forecast', {})
+            eth_ts_historical = data.get('ETH', {}).get('historical', {})
+            eth_ts_forecast = data.get('ETH', {}).get('forecast', {})
+            return btc_ts_historical, btc_ts_forecast, eth_ts_historical, eth_ts_forecast
+        else:
+            st.error(f"Error fetching prediction: {response.status_code}")
+            return None, None, None, None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch predictions: {e}")
+        return None, None, None, None
 
 # Interface Streamlit
 st.title('Farcry: Cryptocurrency Forecasting Tool')
@@ -111,28 +127,97 @@ if value == "Dashboard":
     # Create two columns for the metrics
     cols = st.columns(2)
 
+    btc_ts_historical, btc_ts_forecast, eth_ts_historical, eth_ts_forecast = fetch_time_series()
+    # st.write(btc_ts_historical)
+
     with cols[0]:
         ui.metric_card(
         title="Bitcoin (BTC) Today's Prediction",
         content=prediction_btc_formatted,  # Insert the BTC prediction here
-        description=f"Yesterday's value: {btc_yesterday_formatted}",  # Insert BTC's yesterday value here
+        description=f"Yesterday's actual value: {btc_yesterday_formatted}",  # Insert BTC's yesterday value here
         key=f"1"
         )
         # Show recommendation card for BTC
         if prediction_btc and btc_yesterday_value:
             st.markdown(recommendation_card(prediction_btc, btc_yesterday_value, "BTC"), unsafe_allow_html=True)
+            # Convert the forecast dictionary to a DataFrame
+
+        forecast_df = pd.DataFrame({
+            'Date': list(btc_ts_forecast.keys())[:-2],  # Exclude the last two items
+            'Value': list(btc_ts_forecast.values())[:-2],  # Exclude the last two items
+            'Type': 'Previsão'
+        })
+
+        # Create a DataFrame for the historical data
+        historical_df = pd.DataFrame({
+            'Date': list(btc_ts_historical.keys()),
+            'Value': list(btc_ts_historical.values()),
+            'Type': 'Histórico'
+        })
+        # historical_df['Type'] = 'Histórico'
+        
+        # Combine both DataFrames
+        combined_df = pd.concat([historical_df, forecast_df])
+        
+        # Vega-Lite plot
+        chart = alt.Chart(combined_df).mark_line().encode(
+            x=alt.X('Date:T', title='Data'),
+            y=alt.Y('Value:Q', title='Valor'),
+            color='Type:N'
+        ).properties(
+            width=600,
+            height=400,
+            title=f'Previsão BTC SARIMA'
+        )
+        
+        # Display the chart in Streamlit
+        st.altair_chart(chart, use_container_width=True)
+
+        # st.write(combined_df)
+
 
     with cols[1]:
         ui.metric_card(
         title="Ethereum (ETH) Today's Prediction",
         content=prediction_eth_formatted,  # Insert the ETH prediction here
-        description=f"Yesterday's value: {eth_yesterday_formatted}",  # Insert ETH's yesterday value here
+        description=f"Yesterday's actual value: {eth_yesterday_formatted}",  # Insert ETH's yesterday value here
         key=f"2"
         )
         # Show recommendation card for ETH
         if prediction_eth and eth_yesterday_value:
             st.markdown(recommendation_card(prediction_eth, eth_yesterday_value, "ETH"), unsafe_allow_html=True)
+        
+        forecast_df = pd.DataFrame({
+            'Date': list(eth_ts_forecast.keys()),
+            'Value': list(eth_ts_forecast.values()),
+            'Type': 'Previsão'
+        })
 
+        # Create a DataFrame for the historical data
+        historical_df = pd.DataFrame({
+            'Date': list(eth_ts_historical.keys()),
+            'Value': list(eth_ts_historical.values()),
+            'Type': 'Histórico'
+        })
+        # historical_df['Type'] = 'Histórico'
+        
+        # Combine both DataFrames
+        combined_df = pd.concat([historical_df, forecast_df])
+        
+        # Vega-Lite plot
+        chart = alt.Chart(combined_df).mark_line().encode(
+            x=alt.X('Date:T', title='Data'),
+            y=alt.Y('Value:Q', title='Valor'),
+            color='Type:N'
+        ).properties(
+            width=600,
+            height=400,
+            title=f'Previsão ETH Prophet'
+        )
+        
+        # Display the chart in Streamlit
+        st.altair_chart(chart, use_container_width=True)
+    
 elif value == "Forecasting":
     st.write('Previsões de Série Temporal (ARIMA)')
 

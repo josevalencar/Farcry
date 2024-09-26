@@ -10,6 +10,8 @@ import pandas as pd
 import os
 from supabase import Client
 from pycaret.regression import load_model
+from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+import gzip
 
 # Set up logging configuration
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -159,3 +161,67 @@ def regression_prediction(supabase):
     except Exception as e:
         logger.error(f"Error in regression prediction: {str(e)}")
         return {"Error": str(e)}
+    
+def time_series_prediction(supabase):
+    logger = logging.getLogger(__name__)
+    logger.info("Starting time series prediction process for BTC and ETH")
+
+    try:
+        # Model paths and download
+        bucket_name = 'time_series_models'
+        btc_model_path = 'BTC/btc_sarima_model.pkl.gz'
+        eth_model_path = 'ETH/eth_prophet_model.pkl'
+
+        # Fetch historical data
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+        btc_data = yf.download('BTC-USD', start=start_date, end=end_date, interval='1d')
+        eth_data = yf.download('ETH-USD', start=start_date, end=end_date, interval='1d')
+
+        btc_data['Close_log'] = np.log(btc_data['Close'])
+
+        # Load BTC SARIMA model
+        btc_model_file_path = download_model_from_supabase(supabase, bucket_name, btc_model_path)
+        with gzip.open(btc_model_file_path, 'rb') as f:
+            btc_model = SARIMAXResults.load(f)
+            # Assuming btc_data['Close_log'] is your endogenous variable:
+            # btc_model.model.endog = btc_data['Close_log'].values
+            # btc_model.model.nobs = len(btc_data['Close_log'])
+            # btc_model.model.k_endog = 1  # if it's univariate
+
+        # Load ETH Prophet model
+        eth_model_file_path = download_model_from_supabase(supabase, bucket_name, eth_model_path)
+        with open(eth_model_file_path, 'rb') as f:
+            eth_model = pickle.load(f)
+
+        # Make BTC forecast
+        btc_forecast_log = btc_model.get_forecast(steps=90)
+        btc_forecast = np.exp(btc_forecast_log.predicted_mean)
+
+        btc_forecast_dates = pd.date_range(start=btc_data.index[-1] + timedelta(days=1), periods=90, freq='D')
+        btc_forecast_df = pd.DataFrame({'Forecast': btc_forecast}, index=btc_forecast_dates)
+        btc_forecast_df = btc_forecast_df.fillna(0)
+
+        # Make ETH forecast
+        eth_future_dates = pd.DataFrame({'ds': pd.date_range(start=eth_data.index[-1] + timedelta(days=1), periods=30, freq='D')})
+        eth_forecast = eth_model.predict(eth_future_dates)
+        eth_forecast.set_index('ds', inplace=True)
+        eth_forecast.rename(columns={'yhat': 'Forecast'}, inplace=True)
+
+        # Serialize results
+        result = {
+            "BTC": {
+                "historical": btc_data['Close'].to_dict(),
+                "forecast": btc_forecast_df['Forecast'].apply(float).to_dict()
+            },
+            "ETH": {
+                "historical": eth_data['Close'].to_dict(),
+                "forecast": eth_forecast['Forecast'].apply(float).to_dict()
+            }
+        }
+        logger.info("Time series prediction completed successfully for both BTC and ETH")
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in time series prediction: {str(e)}")
+        raise Exception(f"Failed to make time series prediction: {str(e)}")
