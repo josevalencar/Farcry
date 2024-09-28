@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import model
+from routers import logs
 
 app = FastAPI()
 
 app.include_router(model.router)
-# app.include_router(history.router)
+app.include_router(logs.router)
 
 app.add_middleware(
     CORSMiddleware,

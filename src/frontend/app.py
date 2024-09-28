@@ -13,12 +13,10 @@ import requests
 import yfinance as yf
 from datetime import datetime, timedelta
 
-# Suprimir avisos
 warnings.filterwarnings("ignore")
 
 st.set_page_config(layout="wide")
 
-# Combined CSS to hide Streamlit's menu and header, and customize sliders
 custom_styles = """
     <style>
     /* Hide Streamlit menu and header */
@@ -43,7 +41,6 @@ custom_styles = """
     </style>
 """
 
-# Apply the combined CSS styles using markdown with HTML allowed
 st.markdown(custom_styles, unsafe_allow_html=True)
 
 def get_yesterdays_value(ticker_symbol):
@@ -52,26 +49,25 @@ def get_yesterdays_value(ticker_symbol):
     """
     today = datetime.now()
     yesterday = today - timedelta(days=1)
-    
-    # Fetch historical data for the past 2 days to ensure we get the last valid closing price
-    data = yf.download(ticker_symbol, start=yesterday.strftime('%Y-%m-%d'), end=today.strftime('%Y-%m-%d'))
-    
-    # Return the closing price from yesterday, if available
-    if not data.empty:
-        return data['Close'].iloc[-1]  # Last available closing price
+
+    for attempt in range(3):
+        try:
+            data = yf.download(ticker_symbol, start=(yesterday - timedelta(days=attempt)).strftime('%Y-%m-%d'), end=today.strftime('%Y-%m-%d'))
+
+            if not data.empty:
+                return data['Close'].iloc[-1] 
+
+        except Exception as e:
+            st.error(f"Failed to fetch data for {ticker_symbol}: {e}")
+
+    st.warning(f"Could not fetch data for {ticker_symbol}. Please check the ticker or try again later.")
     return None
 
-# Fetch yesterday's value for BTC and ETH
 btc_yesterday_value = get_yesterdays_value('BTC-USD')
 eth_yesterday_value = get_yesterdays_value('ETH-USD')
 
 btc_yesterday_formatted = f"${btc_yesterday_value:,.2f}" if btc_yesterday_value else "N/A"
 eth_yesterday_formatted = f"${eth_yesterday_value:,.2f}" if eth_yesterday_value else "N/A"
-
-try:
-    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
-except locale.Error:
-    st.error("Locale setting 'pt_BR.UTF-8' is not supported on this system. Please ensure your environment supports this locale.")
 
 def fetch_time_series():
     try:
@@ -89,143 +85,144 @@ def fetch_time_series():
     except requests.exceptions.RequestException as e:
         st.error(f"Failed to fetch predictions: {e}")
         return None, None, None, None
+    
+def fetch_logs():
+    try:
+        response = requests.get("http://backend:8000/logs")
+        if response.status_code == 200:
+            logs = response.json()
+            return logs
+        else:
+            st.error(f"Error fetching logs: {response.status_code}")
+            return []
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch logs: {e}")
+        return []
 
-# Interface Streamlit
 st.title('Farcry: Cryptocurrency Forecasting Tool')
 
 value = ui.tabs(options=['Dashboard', 'Forecasting', 'What-If', 'History'], default_value='Dashboard', key="kanaries")
 st.header(value)
 
 if value == "Dashboard":
-    st.write('Welcome to the Farcry Dashboard. Here you can view the latest predictions and recommendations for Bitcoin (BTC) and Ethereum (ETH), using our Regression Model.')
+    st.write('Welcome to the Farcry Dashboard. Here you can view the latest predictions and recommendations for Bitcoin (BTC) and Ethereum (ETH)')
 
-    # Fetch the predictions for BTC and ETH from the API
-    prediction_btc = None
-    prediction_eth = None
-    try:
-        response = requests.get("http://backend:8000/predictRegression")
-        if response.status_code == 200:
-            data = response.json()
-            prediction_btc = data.get('Prediction BTC', 0)  # Extract the BTC prediction value
-            prediction_eth = data.get('Prediction ETH', 0)  # Extract the ETH prediction value
-        else:
-            st.error(f"Error fetching prediction: {response.status_code}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"Failed to fetch predictions: {e}")
+    with st.spinner('Fetching the latest predictions, please wait...'):
+        prediction_btc = None
+        prediction_eth = None
+        try:
+            response = requests.get("http://backend:8000/predictRegression")
+            if response.status_code == 200:
+                data = response.json()
+                prediction_btc = data.get('Prediction BTC', 0) 
+                prediction_eth = data.get('Prediction ETH', 0)  
+            else:
+                st.error(f"Error fetching prediction: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Failed to fetch predictions: {e}")
 
-    # Format the predictions as currency if available
     prediction_btc_formatted = f"${prediction_btc:,.2f}" if prediction_btc else "N/A"
     prediction_eth_formatted = f"${prediction_eth:,.2f}" if prediction_eth else "N/A"
 
-    # Determine if the user should BUY or DON'T BUY based on prediction vs yesterday's value
     def recommendation_card(prediction, yesterday_value, crypto_name):
         if prediction > yesterday_value:
             return f'<div class="buy-card"><strong>BUY</strong> more {crypto_name}</div>'
         else:
             return f'<div class="dont-buy-card"><strong>DON\'T BUY</strong> more {crypto_name}</div>'
 
-    # Create two columns for the metrics
     cols = st.columns(2)
 
-    btc_ts_historical, btc_ts_forecast, eth_ts_historical, eth_ts_forecast = fetch_time_series()
-    # st.write(btc_ts_historical)
+    with st.spinner('Fetching historical and forecasted data, please wait...'):
+        btc_ts_historical, btc_ts_forecast, eth_ts_historical, eth_ts_forecast = fetch_time_series()
 
     with cols[0]:
         ui.metric_card(
         title="Bitcoin (BTC) Today's Prediction",
-        content=prediction_btc_formatted,  # Insert the BTC prediction here
-        description=f"Yesterday's actual value: {btc_yesterday_formatted}",  # Insert BTC's yesterday value here
+        content=prediction_btc_formatted, 
+        description=f"Yesterday's actual value: {btc_yesterday_formatted}", 
         key=f"1"
         )
-        # Show recommendation card for BTC
         if prediction_btc and btc_yesterday_value:
             st.markdown(recommendation_card(prediction_btc, btc_yesterday_value, "BTC"), unsafe_allow_html=True)
-            # Convert the forecast dictionary to a DataFrame
 
-        forecast_df = pd.DataFrame({
-            'Date': list(btc_ts_forecast.keys())[:-2],  # Exclude the last two items
-            'Value': list(btc_ts_forecast.values())[:-2],  # Exclude the last two items
-            'Type': 'Previsão'
-        })
+        if btc_ts_historical and btc_ts_forecast:
+            forecast_df = pd.DataFrame({
+                'Date': list(btc_ts_forecast.keys())[:-3], 
+                'Value': list(btc_ts_forecast.values())[:-3], 
+                'Type': 'Previsão'
+            })
 
-        # Create a DataFrame for the historical data
-        historical_df = pd.DataFrame({
-            'Date': list(btc_ts_historical.keys()),
-            'Value': list(btc_ts_historical.values()),
-            'Type': 'Histórico'
-        })
-        # historical_df['Type'] = 'Histórico'
-        
-        # Combine both DataFrames
-        combined_df = pd.concat([historical_df, forecast_df])
-        
-        # Vega-Lite plot
-        chart = alt.Chart(combined_df).mark_line().encode(
-            x=alt.X('Date:T', title='Data'),
-            y=alt.Y('Value:Q', title='Valor'),
-            color='Type:N'
-        ).properties(
-            width=600,
-            height=400,
-            title=f'Previsão BTC SARIMA'
-        )
-        
-        # Display the chart in Streamlit
-        st.altair_chart(chart, use_container_width=True)
+            historical_df = pd.DataFrame({
+                'Date': list(btc_ts_historical.keys()),
+                'Value': list(btc_ts_historical.values()),
+                'Type': 'Histórico'
+            })
+            
+            combined_df = pd.concat([historical_df, forecast_df])
 
+            chart = alt.Chart(combined_df).mark_line().encode(
+                x=alt.X('Date:T', title='Data'),
+                y=alt.Y('Value:Q', title='Valor'),
+                color='Type:N'
+            ).properties(
+                width=600,
+                height=400,
+                title=f'Previsão BTC SARIMA'
+            )
+            
+            st.altair_chart(chart, use_container_width=True)
         # st.write(combined_df)
-
 
     with cols[1]:
         ui.metric_card(
         title="Ethereum (ETH) Today's Prediction",
-        content=prediction_eth_formatted,  # Insert the ETH prediction here
-        description=f"Yesterday's actual value: {eth_yesterday_formatted}",  # Insert ETH's yesterday value here
+        content=prediction_eth_formatted,  
+        description=f"Yesterday's actual value: {eth_yesterday_formatted}",  
         key=f"2"
         )
-        # Show recommendation card for ETH
         if prediction_eth and eth_yesterday_value:
             st.markdown(recommendation_card(prediction_eth, eth_yesterday_value, "ETH"), unsafe_allow_html=True)
         
-        forecast_df = pd.DataFrame({
-            'Date': list(eth_ts_forecast.keys()),
-            'Value': list(eth_ts_forecast.values()),
-            'Type': 'Previsão'
-        })
+        if eth_ts_historical and eth_ts_forecast:
+            forecast_df = pd.DataFrame({
+                'Date': list(eth_ts_forecast.keys()),
+                'Value': list(eth_ts_forecast.values()),
+                'Type': 'Previsão'
+            })
 
-        # Create a DataFrame for the historical data
-        historical_df = pd.DataFrame({
-            'Date': list(eth_ts_historical.keys()),
-            'Value': list(eth_ts_historical.values()),
-            'Type': 'Histórico'
-        })
-        # historical_df['Type'] = 'Histórico'
-        
-        # Combine both DataFrames
-        combined_df = pd.concat([historical_df, forecast_df])
-        
-        # Vega-Lite plot
-        chart = alt.Chart(combined_df).mark_line().encode(
-            x=alt.X('Date:T', title='Data'),
-            y=alt.Y('Value:Q', title='Valor'),
-            color='Type:N'
-        ).properties(
-            width=600,
-            height=400,
-            title=f'Previsão ETH Prophet'
-        )
-        
-        # Display the chart in Streamlit
-        st.altair_chart(chart, use_container_width=True)
-    
-elif value == "Forecasting":
-    st.write('Previsões de Série Temporal (ARIMA)')
+            historical_df = pd.DataFrame({
+                'Date': list(eth_ts_historical.keys()),
+                'Value': list(eth_ts_historical.values()),
+                'Type': 'Histórico'
+            })
 
-elif value == "What-If":
-    st.write('Análise What-If com Rede Neural')
+            combined_df = pd.concat([historical_df, forecast_df])
+
+            chart = alt.Chart(combined_df).mark_line().encode(
+                x=alt.X('Date:T', title='Data'),
+                y=alt.Y('Value:Q', title='Valor'),
+                color='Type:N'
+            ).properties(
+                width=600,
+                height=400,
+                title=f'Previsão ETH Prophet'
+            )
+
+            st.altair_chart(chart, use_container_width=True)
 
 elif value == "History":
     st.write('Logs from the system')
 
-# st.sidebar.markdown("---")
+    logs = fetch_logs()
+
+    if logs:
+        logs_df = pd.DataFrame(logs)
+
+        logs_df['datetime'] = pd.to_datetime(logs_df['datetime']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        st.dataframe(logs_df)
+
+    else:
+        st.info("No logs available at the moment.")
+
 st.sidebar.info("Farcry is the all-in-one cryptocurrency forecasting tool that uses Machine Learning models to predict future values, so that you can either buy or sell your cryptos.")

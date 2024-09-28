@@ -13,13 +13,11 @@ def get_supabase_client() -> Client:
 @router.get("/predictRegression/")
 async def predict_regression(supabase: Client = Depends(get_supabase_client)):
 
-    # my_prediction = prediction(knr=knr, supabase=supabase)
     prediction_result = regression_prediction(supabase=supabase)
     return prediction_result
 
 @router.get("/predictTimeSeries/")
 async def predict_time_series(supabase: Client = Depends(get_supabase_client)):
 
-    # my_prediction = prediction(knr=knr, supabase=supabase)
     prediction_result = time_series_prediction(supabase=supabase)
     return prediction_result

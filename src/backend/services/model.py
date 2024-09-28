@@ -17,7 +17,24 @@ import gzip
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Function to fetch Bitcoin data for the last 30 days
+from datetime import datetime
+
+def insert_log(supabase, system, action, code):
+    try:
+        log_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        log_entry = {
+            "datetime": log_timestamp,
+            "system": system,
+            "action": action,
+            "code": code
+        }
+
+        supabase.table("logs").insert(log_entry).execute()
+
+    except Exception as e:
+        logger.error(f"Error while inserting log: {str(e)}")
+
 def fetch_btc_data():
     today = datetime.now()
     yesterday = today - timedelta(days=1)
@@ -141,7 +158,7 @@ def load_model_and_predict(supabase, data, bucket_name, model_path):
         raise
 
 # Main function to run the regression prediction for both BTC and ETH
-def regression_prediction(supabase):
+def regression_prediction(supabase=Client):
     try:
         logger.info("Starting regression prediction process for BTC and ETH.")
         
@@ -156,10 +173,13 @@ def regression_prediction(supabase):
         eth_prediction = load_model_and_predict(supabase, eth_df_processed, 'regression_models', 'ETH/eth_br_model.pkl')
         
         logger.info("Regression prediction completed successfully for both BTC and ETH.")
+        insert_log(supabase, system="model_service", action="predict_regression", code=200)
         return {"Prediction BTC": btc_prediction[0], "Prediction ETH": eth_prediction[0]}
+
     
     except Exception as e:
         logger.error(f"Error in regression prediction: {str(e)}")
+        insert_log(supabase, system="model_service", action="predict_regression", code=500)
         return {"Error": str(e)}
     
 def time_series_prediction(supabase):
@@ -203,7 +223,7 @@ def time_series_prediction(supabase):
         btc_forecast_df = btc_forecast_df.fillna(0)
 
         # Make ETH forecast
-        eth_future_dates = pd.DataFrame({'ds': pd.date_range(start=eth_data.index[-1] + timedelta(days=1), periods=30, freq='D')})
+        eth_future_dates = pd.DataFrame({'ds': pd.date_range(start=eth_data.index[-1] + timedelta(days=1), periods=90, freq='D')})
         eth_forecast = eth_model.predict(eth_future_dates)
         eth_forecast.set_index('ds', inplace=True)
         eth_forecast.rename(columns={'yhat': 'Forecast'}, inplace=True)
@@ -220,8 +240,10 @@ def time_series_prediction(supabase):
             }
         }
         logger.info("Time series prediction completed successfully for both BTC and ETH")
+        insert_log(supabase, system="model_service", action="predict_time_series", code=200)
         return result
 
     except Exception as e:
         logger.error(f"Error in time series prediction: {str(e)}")
+        insert_log(supabase, system="model_service", action="predict_time_series", code=500)
         raise Exception(f"Failed to make time series prediction: {str(e)}")
