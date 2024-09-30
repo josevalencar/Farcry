@@ -101,7 +101,7 @@ def fetch_logs():
 
 st.title('Farcry: Cryptocurrency Forecasting Tool')
 
-value = ui.tabs(options=['Dashboard', 'Forecasting', 'What-If', 'History'], default_value='Dashboard', key="kanaries")
+value = ui.tabs(options=['Dashboard', 'History'], default_value='Dashboard', key="kanaries")
 st.header(value)
 
 if value == "Dashboard":
